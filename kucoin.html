@@ -1,0 +1,44 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Balance Chart</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>Balance Chart</h1>
+    <canvas id="balanceChart" width="400" height="200"></canvas>
+
+    <script>
+        fetch('balance.txt')
+            .then(response => response.text())
+            .then(data => {
+                const lines = data.split('\n');
+                const balanceValues = lines.map(line => parseFloat(line));
+                
+                const ctx = document.getElementById('balanceChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: Array.from({ length: balanceValues.length }, (_, i) => i + 1),
+                        datasets: [{
+                            label: 'Balance',
+                            data: balanceValues,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(error => console.error('Error loading balance data:', error));
+    </script>
+</body>
+</html>

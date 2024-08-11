@@ -1,0 +1,250 @@
+
+import time
+from kucoin.client import Client
+from kucoin.exceptions import KucoinAPIException
+from decimal import Decimal
+import kucoin.client
+from decimal import Decimal, ROUND_HALF_UP
+from pprint import pprint
+import praw
+import time
+import datetime
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+import nltk
+nltk.download('vader_lexicon')
+
+class Exchange:
+    def analyze_sentiments(self,posts):
+     sia = SentimentIntensityAnalyzer()
+     sentiments = []
+     for post in posts:
+        sentiment_score = sia.polarity_scores(post)
+        sentiments.append(sentiment_score['compound'])
+     return sentiments
+
+    def make_dict(self):
+     target = open('sentiment_last_minute.txt', 'w')
+
+    # Set up the Reddit API with application-only authentication
+     reddit = praw.Reddit(
+        client_id='uTVoPDa7IIxFtOIjpJXumA',
+        client_secret='nesGWqA5ctPkD5I8NcgGdHxthztSJQ',
+        user_agent='YOUR_USER_AGENT',  # Provide any non-empty string as a user agent
+        check_for_async=False,
+     )
+
+    # Fetch Bitcoin-related comments or posts from Reddit
+     subreddit = reddit.subreddit('Bitcoin')
+     posts = []
+
+    # Use 'new' or 'hot' or 'top' depending on your preference
+     for submission in subreddit.new(limit=3):
+        posts.append(submission.title)
+
+    # Analyze sentiments of the posts using VADER Sentiment Analysis
+     sentiment_scores = self.analyze_sentiments(posts)
+     pprint(sentiment_scores)
+     if sentiment_scores:
+        average_score = sum(sentiment_scores) / len(sentiment_scores)
+        print("Average Sentiment Score: {:.2f}".format(average_score))  # Corrected the pprint line
+
+        # Make an average decision based on the average score
+        if average_score >= 0.05:
+            average_decision = "positive"
+        elif average_score <= -0.05:
+            average_decision = "negative"
+        else:
+            average_decision = "neutral"
+
+        print("Average Decision:", average_decision)
+        return average_decision  
+    # Here, you can proceed to store the sentiment data or perform further analysis as needed
+
+     target.close()
+     
+    def __init__(self, api_key, api_secret, api_passphrase):
+        self.client = kucoin.client.Client(api_key, api_secret, api_passphrase)
+        self.balance = self.fetch_balance("USDT")
+
+        self.position = None
+        self.entry_price = None
+        self.order_id = None
+        self.previous_price = None
+        self.trade=False
+        self.buy=0
+        self.sell=0
+        self.init_balance = self.fetch_balance("USDT")
+        self.after_balance = self.fetch_balance("USDT")
+    def fetch_bitcoin_price(self):
+        ticker = self.client.get_ticker('BTC-USDT')
+        return Decimal(ticker['price'])
+
+    def calculate_pip_change(self, current_price, previous_price):
+        if previous_price is None:
+            return None
+        pip_change = current_price - previous_price
+        return pip_change
+
+    def fetch_balance(self, symbol):
+     account_list = self.client.get_accounts()
+     for account in account_list:
+        if account['type'] == 'trade' and account['currency'] == symbol:
+            return Decimal(account['balance'])
+     return Decimal('0.0') 
+            
+    def place_trade(self, side):
+     usdt_balance = self.fetch_balance("USDT") # Replace with your actual method to fetch the balance
+     bitcoin_price = Decimal(self.fetch_bitcoin_price())  # Replace with the current Bitcoin price
+     btc_balance = self.fetch_balance("BTC")
+# Convert USDT balance to Bitcoin
+     bitcoin_equivalent = usdt_balance / bitcoin_price     
+     symbol_info = self.client.get_ticker('BTC-USDT')
+     if side == "buy":
+            ask_price = Decimal(symbol_info['bestAsk'])  
+            self.position = "buy"
+            self.entry_price = ask_price           
+            trade_size_in_usdt = str("{:.6f}".format(1/(bitcoin_price/ usdt_balance)))
+            try:
+
+                order = self.client.create_limit_order('BTC-USDT', 'buy', price=str(ask_price), size=str(trade_size_in_usdt))
+                print("Limit Buy Order Placed:", order)
+            except KucoinAPIException as e:
+                print("Error placing limit buy order:", e)
+     elif side == "sell":
+            bid_price = Decimal(symbol_info['bestBid'])
+            self.position = None
+            self.entry_price = None     
+            trade_size_in_btc = str(btc_balance)
+            
+            self.after_balance = self.fetch_balance("USDT")
+            try:
+
+                order = self.client.create_limit_order('BTC-USDT', 'sell', price=str(bid_price), size=str(trade_size_in_btc))
+                print("Limit Sell Order Placed:", order)
+            except KucoinAPIException as e:
+                print("Error placing limit sell order:", e)
+
+# ... (rest of the code)
+   
+    def cancel_order(self, order_id):
+     try:
+        self.client.cancel_order(order_id)
+        print(f"Order {order_id} canceled successfully.")
+     except KucoinAPIException as e:
+        if "Cancel failed." in str(e):
+            print(f"Order {order_id} is already in a final state and cannot be canceled.")
+        else:
+            print("Errorw cancelling order on KuCoin:", e)
+     except Exception as e:
+        print("An unexpected error occurred:", e)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def calculate_take_profit_size(self, trade_size, take_profit_percentage):
+        return (trade_size * take_profit_percentage / 100 )
+
+    def calculate_stop_loss_size(self, trade_size, stop_loss_percentage):
+        return (trade_size * stop_loss_percentage / 100)
+
+
+    def close_trade(self):
+        if self.position is None:
+            print("No open trade to close.")
+            return
+
+        current_price = self.fetch_bitcoin_price()
+        pip_change = self.calculate_pip_change(current_price, self.entry_price)
+
+        if (pip_change >= 0.5 and self.position == "buy") or (pip_change <= -0.02 and self.position == "buy"):
+          
+
+            print(f"Closed {self.position} trade at ${current_price:.2f}. Balance: ${self.balance:.2f}")
+            self.position = None
+            self.entry_price = None
+
+            # Cancel the open order on KuCoin
+            
+            self.cancel_order(self.order_id)
+            self.order_id = None
+
+    def main_loop(self):
+     try:
+        while True:
+            self.client = kucoin.client.Client(api_key, api_secret, api_passphrase)
+            predict=self.make_dict()
+            balance = self.fetch_balance("USDT")
+            print("Balance: $", balance)
+
+            current_price = self.fetch_bitcoin_price()
+            balancelocked = self.fetch_balance("BTC")
+            if balancelocked != 0:
+             current_price_usdt = current_price/(1/balancelocked)
+             print("Balance locked in btc",balancelocked)
+            else:
+             print("Balance locked is zero, cannot calculate current price in USDT.")
+
+            print("Balance btc ",str("{:.6f}".format(1/(current_price/ 
+            balance)))) profit=self.init_balance self.after_balance -1 
+            print("profit ",profit)
+
+            if self.previous_price is not None: pip_change = 
+                self.calculate_pip_change(current_price, 
+                self.previous_price) if self.position =="buy":
+                    print(f"Open posision Entry 
+                Price:${self.entry_price:.2f} Current 
+                price::${current_price:.2f} 
+                Pips::${current_price-self.entry_price:.2f}") else:
+                    print(f"No open position. Current Price: 
+                ${current_price:.2f}") if pip_change is not None:
+                    print("Pip Change:", pip_change)
+
+              
+                if predict=="positive": if self.position == None:
+                        self.place_trade("buy")
+                                        
+                    
+                if predict=="negative" or predict=="neutral":                       
+                 self.buy=0 
+                 self.sell=0  
+       
+                 if self.position == "buy":
+           
+ 
+ 
+ 
+ 
+# Set your desired stop loss percentage
+            
+
+                       self.place_trade("sell")
+                       self.cancel_order(self.order_id)  
+             
+            self.previous_price = current_price
+
+            # Check for conditions to cancel the order
+
+
+
+            time.sleep(1)
+     except KeyboardInterrupt:
+        print("Loop terminated by user.")
+if __name__ == "__main__":
+    api_key = "64cb6d66ad00ec00015c5087"
+    api_secret = "2c42f434-1f93-4e76-a81c-9143e0705421"
+    api_passphrase = "m@$teryoDA11"
+
+    exchange = Exchange(api_key, api_secret, api_passphrase)
+    exchange.main_loop()
